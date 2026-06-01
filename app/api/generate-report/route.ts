@@ -6,6 +6,34 @@ import { prisma } from '@/lib/prisma';
 import { getFileUrl } from '@/lib/s3';
 import type { ReportFormData, DetailedEntry } from '@/lib/types';
 
+// Helper to fetch image from S3/URL and return as Buffer
+async function fetchImageBuffer(cloudPath: string): Promise<{ buffer: Buffer; width: number; height: number } | null> {
+  try {
+    const url = await getFileUrl(cloudPath, true);
+    if (!url) return null;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return null;
+    const arrayBuf = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuf);
+    // Default dimensions for report photos (fit within page width)
+    // Use 450x300 as a reasonable default that fits within table cells
+    return { buffer, width: 450, height: 300 };
+  } catch (err) {
+    console.error('Failed to fetch image:', cloudPath, err);
+    return null;
+  }
+}
+
+// Helper to get public URL for an image
+async function getPhotoPublicUrl(cloudPath: string): Promise<string | null> {
+  try {
+    const url = await getFileUrl(cloudPath, true);
+    return url || null;
+  } catch {
+    return null;
+  }
+}
+
 function createBorderedCell(text: string, bold: boolean = false, width?: number): TableCell {
   const cellOpts: any = {
     children: [
@@ -27,7 +55,7 @@ function createBorderedCell(text: string, bold: boolean = false, width?: number)
   return new TableCell(cellOpts);
 }
 
-function buildFlippedClassReport(data: ReportFormData): Document {
+async function buildFlippedClassReport(data: ReportFormData): Promise<Document> {
   const sections: any[] = [];
 
   // Header paragraphs
@@ -117,21 +145,58 @@ function buildFlippedClassReport(data: ReportFormData): Document {
       ],
     });
 
-    const contentParts: string[] = [];
-    if (de?.materialsShared) contentParts.push(`Materials Shared Before Class:\n${de.materialsShared}`);
-    if (de?.conductionWriteup) contentParts.push(`\nConduction of Flipped Classroom:\n${de.conductionWriteup}`);
-    if (de?.evaluationDetails) contentParts.push(`\nEvaluation:\n${de.evaluationDetails}`);
-    if (de?.evaluationQuestions) contentParts.push(`\nEvaluation Questions:\n${de.evaluationQuestions}`);
-    if (de?.performanceStats) contentParts.push(`\nPerformance Statistics:\n${de.performanceStats}`);
-    if (de?.outcome) contentParts.push(`\nOutcome:\n${de.outcome}`);
-    if (de?.posAndPsos) contentParts.push(`\nPOs and PSOs Addressed:\n${de.posAndPsos}`);
+    // Build content paragraphs (including photos)
+    const cellChildren: any[] = [];
+
+    const addTextSection = (label: string, text: string) => {
+      cellChildren.push(
+        new Paragraph({ spacing: { before: 100, after: 40 }, children: [new TextRun({ text: label, bold: true, size: 20, font: 'Calibri' })] })
+      );
+      for (const line of (text ?? '').split('\n')) {
+        cellChildren.push(
+          new Paragraph({ children: [new TextRun({ text: line ?? '', size: 20, font: 'Calibri' })], spacing: { before: 20, after: 20 } })
+        );
+      }
+    };
+
+    if (de?.materialsShared) addTextSection('Materials Shared Before Class:', de.materialsShared);
+    if (de?.conductionWriteup) addTextSection('Conduction of Flipped Classroom:', de.conductionWriteup);
+
+    // Embed photos after conduction writeup (like the reference template)
+    if (de?.photoUrls && de.photoUrls.length > 0) {
+      cellChildren.push(
+        new Paragraph({ spacing: { before: 100, after: 40 }, children: [new TextRun({ text: 'Classroom Photos:', bold: true, size: 20, font: 'Calibri' })] })
+      );
+      for (const photoPath of de.photoUrls) {
+        const imgData = await fetchImageBuffer(photoPath);
+        if (imgData) {
+          cellChildren.push(
+            new Paragraph({
+              spacing: { before: 80, after: 80 },
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({
+                  data: imgData.buffer,
+                  transformation: { width: imgData.width, height: imgData.height },
+                  type: 'png',
+                }),
+              ],
+            })
+          );
+        }
+      }
+    }
+
+    if (de?.evaluationDetails) addTextSection('Evaluation:', de.evaluationDetails);
+    if (de?.evaluationQuestions) addTextSection('Evaluation Questions:', de.evaluationQuestions);
+    if (de?.performanceStats) addTextSection('Performance Statistics:', de.performanceStats);
+    if (de?.outcome) addTextSection('Outcome:', de.outcome);
+    if (de?.posAndPsos) addTextSection('POs and PSOs Addressed:', de.posAndPsos);
 
     const contentRow = new TableRow({
       children: [
         new TableCell({
-          children: contentParts.join('\n').split('\n').map((line: string) =>
-            new Paragraph({ children: [new TextRun({ text: line ?? '', size: 20, font: 'Calibri' })], spacing: { before: 20, after: 20 } })
-          ),
+          children: cellChildren,
           columnSpan: 5,
           borders: { top: { style: BorderStyle.SINGLE, size: 1 }, bottom: { style: BorderStyle.SINGLE, size: 1 }, left: { style: BorderStyle.SINGLE, size: 1 }, right: { style: BorderStyle.SINGLE, size: 1 } },
         }),
@@ -160,7 +225,7 @@ function buildFlippedClassReport(data: ReportFormData): Document {
   return new Document({ sections });
 }
 
-function buildVideoSessionReport(data: ReportFormData): Document {
+async function buildVideoSessionReport(data: ReportFormData): Promise<Document> {
   const sections: any[] = [];
 
   const headerParagraphs = [
@@ -246,20 +311,57 @@ function buildVideoSessionReport(data: ReportFormData): Document {
       ],
     });
 
-    const contentParts: string[] = [];
-    if (de?.videoLink) contentParts.push(`Video Session Link: ${de.videoLink}`);
-    if (de?.duration) contentParts.push(`Duration: ${de.duration}`);
-    if (de?.learningOutcomes) contentParts.push(`\nLearning Outcomes:\n${de.learningOutcomes}`);
-    if (de?.curriculumGap) contentParts.push(`\nCurriculum Gap Addressed:\n${de.curriculumGap}`);
-    if (de?.posAndPsos) contentParts.push(`\nPOs and PSOs Addressed:\n${de.posAndPsos}`);
-    if (de?.outcome) contentParts.push(`\nOutcome:\n${de.outcome}`);
+    // Build content paragraphs (including photos)
+    const cellChildren: any[] = [];
+
+    const addTextSection = (label: string, text: string) => {
+      cellChildren.push(
+        new Paragraph({ spacing: { before: 100, after: 40 }, children: [new TextRun({ text: label, bold: true, size: 20, font: 'Calibri' })] })
+      );
+      for (const line of (text ?? '').split('\n')) {
+        cellChildren.push(
+          new Paragraph({ children: [new TextRun({ text: line ?? '', size: 20, font: 'Calibri' })], spacing: { before: 20, after: 20 } })
+        );
+      }
+    };
+
+    if (de?.videoLink) addTextSection('Video Session Link:', de.videoLink);
+    if (de?.duration) addTextSection('Duration:', de.duration);
+    if (de?.learningOutcomes) addTextSection('Learning Outcomes:', de.learningOutcomes);
+
+    // Embed photos
+    if (de?.photoUrls && de.photoUrls.length > 0) {
+      cellChildren.push(
+        new Paragraph({ spacing: { before: 100, after: 40 }, children: [new TextRun({ text: 'Session Photos:', bold: true, size: 20, font: 'Calibri' })] })
+      );
+      for (const photoPath of de.photoUrls) {
+        const imgData = await fetchImageBuffer(photoPath);
+        if (imgData) {
+          cellChildren.push(
+            new Paragraph({
+              spacing: { before: 80, after: 80 },
+              alignment: AlignmentType.CENTER,
+              children: [
+                new ImageRun({
+                  data: imgData.buffer,
+                  transformation: { width: imgData.width, height: imgData.height },
+                  type: 'png',
+                }),
+              ],
+            })
+          );
+        }
+      }
+    }
+
+    if (de?.curriculumGap) addTextSection('Curriculum Gap Addressed:', de.curriculumGap);
+    if (de?.posAndPsos) addTextSection('POs and PSOs Addressed:', de.posAndPsos);
+    if (de?.outcome) addTextSection('Outcome:', de.outcome);
 
     const contentRow = new TableRow({
       children: [
         new TableCell({
-          children: contentParts.join('\n').split('\n').map((line: string) =>
-            new Paragraph({ children: [new TextRun({ text: line ?? '', size: 20, font: 'Calibri' })], spacing: { before: 20, after: 20 } })
-          ),
+          children: cellChildren,
           columnSpan: 5,
           borders: { top: { style: BorderStyle.SINGLE, size: 1 }, bottom: { style: BorderStyle.SINGLE, size: 1 }, left: { style: BorderStyle.SINGLE, size: 1 }, right: { style: BorderStyle.SINGLE, size: 1 } },
         }),
@@ -300,8 +402,8 @@ export async function POST(request: Request) {
 
     // Build DOCX
     const doc = formData?.sessionType === 'video_session'
-      ? buildVideoSessionReport(formData)
-      : buildFlippedClassReport(formData);
+      ? await buildVideoSessionReport(formData)
+      : await buildFlippedClassReport(formData);
 
     const docxBuffer = await Packer.toBuffer(doc);
 
@@ -320,7 +422,7 @@ export async function POST(request: Request) {
 
     if (format === 'pdf') {
       // Generate HTML for PDF conversion
-      const htmlContent = generateReportHtml(formData);
+      const htmlContent = await generateReportHtml(formData);
 
       // Create PDF request
       const createResponse = await fetch('https://apps.abacus.ai/api/createConvertHtmlToPdfRequest', {
@@ -405,7 +507,7 @@ export async function POST(request: Request) {
   }
 }
 
-function generateReportHtml(data: ReportFormData): string {
+async function generateReportHtml(data: ReportFormData): Promise<string> {
   const isFlipped = data?.sessionType === 'flipped_class';
   const title = isFlipped ? 'Flipped Classroom REPORT' : 'Video Session REPORT';
 
@@ -426,6 +528,16 @@ function generateReportHtml(data: ReportFormData): string {
     if (isFlipped) {
       if (de?.materialsShared) content += `<p><strong>Materials Shared Before Class:</strong><br/>${de.materialsShared.replace(/\n/g, '<br/>')}</p>`;
       if (de?.conductionWriteup) content += `<p><strong>Conduction of Flipped Classroom:</strong><br/>${de.conductionWriteup.replace(/\n/g, '<br/>')}</p>`;
+      // Embed photos
+      if (de?.photoUrls && de.photoUrls.length > 0) {
+        content += `<p><strong>Classroom Photos:</strong></p>`;
+        for (const photoPath of de.photoUrls) {
+          const photoUrl = await getPhotoPublicUrl(photoPath);
+          if (photoUrl) {
+            content += `<div style="text-align:center;margin:10px 0;"><img src="${photoUrl}" style="max-width:100%;max-height:400px;border:1px solid #ccc;" /></div>`;
+          }
+        }
+      }
       if (de?.evaluationDetails) content += `<p><strong>Evaluation:</strong><br/>${de.evaluationDetails.replace(/\n/g, '<br/>')}</p>`;
       if (de?.evaluationQuestions) content += `<p><strong>Evaluation Questions:</strong><br/>${de.evaluationQuestions.replace(/\n/g, '<br/>')}</p>`;
       if (de?.performanceStats) content += `<p><strong>Performance Statistics:</strong><br/>${de.performanceStats.replace(/\n/g, '<br/>')}</p>`;
@@ -435,6 +547,16 @@ function generateReportHtml(data: ReportFormData): string {
       if (de?.videoLink) content += `<p><strong>Video Link:</strong> ${de.videoLink}</p>`;
       if (de?.duration) content += `<p><strong>Duration:</strong> ${de.duration}</p>`;
       if (de?.learningOutcomes) content += `<p><strong>Learning Outcomes:</strong><br/>${de.learningOutcomes.replace(/\n/g, '<br/>')}</p>`;
+      // Embed photos
+      if (de?.photoUrls && de.photoUrls.length > 0) {
+        content += `<p><strong>Session Photos:</strong></p>`;
+        for (const photoPath of de.photoUrls) {
+          const photoUrl = await getPhotoPublicUrl(photoPath);
+          if (photoUrl) {
+            content += `<div style="text-align:center;margin:10px 0;"><img src="${photoUrl}" style="max-width:100%;max-height:400px;border:1px solid #ccc;" /></div>`;
+          }
+        }
+      }
       if (de?.curriculumGap) content += `<p><strong>Curriculum Gap:</strong><br/>${de.curriculumGap.replace(/\n/g, '<br/>')}</p>`;
       if (de?.posAndPsos) content += `<p><strong>POs and PSOs:</strong><br/>${de.posAndPsos.replace(/\n/g, '<br/>')}</p>`;
       if (de?.outcome) content += `<p><strong>Outcome:</strong><br/>${de.outcome.replace(/\n/g, '<br/>')}</p>`;
