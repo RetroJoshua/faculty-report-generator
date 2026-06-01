@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#1e3a5f"/>
+  <path d="M128 60L40 100l88 40 88-40z" fill="#d4a843"/>
+  <path d="M128 140l-60-27.27v40c0 16 26.86 29.09 60 29.09s60-13.09 60-29.09v-40z" fill="#d4a843"/>
+  <rect x="200" y="100" width="8" height="60" fill="#d4a843"/>
+  <circle cx="204" cy="166" r="6" fill="#d4a843"/>
+  <text x="128" y="220" font-family="Arial, sans-serif" font-size="72" font-weight="bold" fill="#d4a843" text-anchor="middle">FR</text>
+</svg>

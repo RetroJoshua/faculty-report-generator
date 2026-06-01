@@ -1,0 +1,21 @@
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/faculty_report_generator/nextjs_space/node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model Analytics {
+  id        String   @id @default(cuid())
+  type      String   // 'view' or 'report_generated'
+  format    String?  // 'docx' or 'pdf' (only for report_generated)
+  sessionType String? // 'flipped_class' or 'video_session'
+  createdAt DateTime @default(now())
+
+  @@index([type])
+  @@index([createdAt])
+}
